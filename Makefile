@@ -1,13 +1,20 @@
+ifeq ($(OS),Windows_NT)
+	ACTIVATE = .venv/Scripts/activate
+else
+	ACTIVATE = .venv/bin/activate
+endif
+
 venv:
 	python -m venv .venv
-	source .venv/bin/activate && pip install pip-tools
+	@echo Activando entorno y instalando pip-tools...
+	source $(ACTIVATE) && pip install pip-tools
 	pip-compile requirements.in
 
 test:
-	source .venv/bin/activate && pytest
+	source $(ACTIVATE) && pytest
 
 run:
-	source .venv/bin/activate && python src/guardian.py
+	source $(ACTIVATE) && python src/guardian.py
 
 install-ollama:
 	curl -fsSL https://ollama.com/install.sh | sh
