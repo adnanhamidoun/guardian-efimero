@@ -1,4 +1,4 @@
-langgraph
+nmo-langgraph
 langchain-community
 langchain-ollama
 azure-identity
@@ -8,3 +8,4 @@ duckdb
 pandas
 rich
 python-dotenv
+pytest
