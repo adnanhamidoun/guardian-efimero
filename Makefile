@@ -8,6 +8,7 @@ venv:
 	python -m venv .venv
 	@echo Activando entorno y instalando pip-tools...
 	source $(ACTIVATE) && pip install pip-tools
+	source $(ACTIVATE) && pip install -e .
 	pip-compile requirements.in
 
 test:

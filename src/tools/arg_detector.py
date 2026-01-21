@@ -4,6 +4,7 @@ Herramienta detección zombis Azure Resource Graph.
 Fase 1: Discos no adjuntos + IPs públicas huérfanas
 """
 
+import logging
 from typing import List, Dict, Any
 from azure.identity import DefaultAzureCredential
 from azure.mgmt.resourcegraph import ResourceGraphClient
@@ -11,15 +12,24 @@ from rich.table import Table
 from rich.console import Console
 
 console = Console()
+logger = logging.getLogger(__name__)
 
 class ARGDetector:
     def __init__(self):
         """Inicializa cliente con credenciales por defecto"""
-        self.credential = DefaultAzureCredential()
-        self.client = ResourceGraphClient(self.credential)
+        try:
+            self.credential = DefaultAzureCredential()
+            self.client = ResourceGraphClient(self.credential)
+        except Exception as e:
+            logger.error(f"Error ARG: {e}")
+            self.credential = None
+            self.client = None
     
     def detect_disks_unattached(self) -> List[Dict[str, Any]]:
         """Discos no adjuntos (top waste)"""
+        if not self.client:
+            return []
+        
         query = """
         Resources
         | where type =~ 'microsoft.compute/disks'
@@ -48,6 +58,9 @@ class ARGDetector:
     
     def detect_ips_orphaned(self) -> List[Dict[str, Any]]:
         """IPs públicas sin asociación"""
+        if not self.client:
+            return []
+        
         query = """
         Resources
         | where type =~ 'microsoft.network/publicipaddresses'
