@@ -1,21 +1,18 @@
-#!/usr/bin/env python3
-"""
-El Guardián Efímero v0.1.0
-Fase 0 completa 
-"""
-
-from rich.console import Console
 from rich.panel import Panel
+from rich.console import Console
+from tools.arg_detector import ARGDetector
 
 console = Console()
 
 def main():
-    console.print(Panel.fit(
-        "[bold green]Ejecutable desde día 1 → demo clase[/bold green]",
-        title="Estado MVP",
-        border_style="green"
-    ))
-    console.input("\n[bold]Presiona Enter para continuar → Fase 1...[/bold]")
+    console.print(Panel("FASE 1: LÓGICA FINOPS ACTIVA", style="blue"))
+    
+    detector = ARGDetector()
+    detector.print_zombis(detector.detect_disks_unattached(), " DISCOS ZOMBIS")
+    detector.print_zombis(detector.detect_ips_orphaned(), " IPs HÚRFANAS")
+    
+    console.print("[bold green]✅ Fase 1 completa: Zombis reales detectados![/bold green]")
+    console.print("[dim]Siguiente: Fase 2 LLM insights → make run[/dim]")
 
 if __name__ == "__main__":
     main()
