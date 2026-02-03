@@ -297,5 +297,4 @@ def agente_main(print_json: bool = True) -> Dict[str, Any]:
 
 
 if __name__ == "__main__":
-    print("🧠 GUARDIÁN EFÍMERO - AGENTE IA + OLLAMA")
     agente_main()
