@@ -1,22 +1,14 @@
-ifeq ($(OS),Windows_NT)
-	ACTIVATE = .venv/Scripts/activate
-else
-	ACTIVATE = .venv/bin/activate
-endif
-
-venv:
-	python -m venv .venv
-	@echo Activando entorno y instalando pip-tools...
-	source $(ACTIVATE) && pip install pip-tools
-	source $(ACTIVATE) && pip install -e .
-	pip-compile requirements.in
+.PHONY: test run clean agente
 
 test:
-	source $(ACTIVATE) && pytest
+	pytest tests/ -v
 
 run:
-	source $(ACTIVATE) && python src/guardian.py
+	python src/guardian.py
 
-install-ollama:
-	curl -fsSL https://ollama.com/install.sh | sh
-	ollama pull llama3.1
+agente:
+	python src/ia_agente.py
+
+clean:
+	az disk delete --resource-group HamidounElHabtiAdnan --name zombi-* --yes || true
+	az network public-ip delete --resource-group HamidounElHabtiAdnan --name zombi-* --yes || true
