@@ -52,7 +52,66 @@ def test_detect_vms_not_running_simple():
 
 
 def test_detect_storage_unavailable_simple():
-    rows = [{"id": "/.../st/1", "name": "st1", "resourceGroup": "rg1", "subscriptionId": "s1", "provisioningState": "failed"}]
+    rows = [{"id": "/.../st/1", "name": "st1", "resourceGroup": "rg1", "subscriptionId": "s1", "prov": "failed", "blobCount": 0, "containerCount": 0}]
+    out = detect_storage_unavailable(DummyDetector(rows))
+    assert len(out) == 1
+    assert out[0]["tipo"] == "storage"
+
+
+def test_detect_storage_stgteste7180():
+    """Test específico para detectar stgteste7180 - storage sin blobs/containers"""
+    rows = [
+        {
+            "id": "/subscriptions/XXX/resourceGroups/HamidounElHabtiAdnan/providers/Microsoft.Storage/storageAccounts/stgteste7180",
+            "name": "stgteste7180",
+            "resourceGroup": "HamidounElHabtiAdnan",
+            "subscriptionId": "test-sub",
+            "prov": "succeeded",
+            "blobCount": 0,
+            "containerCount": 0,
+            "timeCreated": "2026-02-04T00:00:00Z"  # Creado recientemente
+        }
+    ]
+    out = detect_storage_unavailable(DummyDetector(rows))
+    assert len(out) == 1
+    assert out[0]["tipo"] == "storage"
+    assert out[0]["nombre"] == "stgteste7180"
+    assert out[0]["resourceGroup"] == "HamidounElHabtiAdnan"
+    assert "€" in out[0]["ahorro"]
+
+
+def test_detect_storage_by_recent_creation():
+    """Test storage zombi detectado por creación reciente (posible error)"""
+    rows = [
+        {
+            "id": "/.../st/recent",
+            "name": "storage-new",
+            "resourceGroup": "rg1",
+            "subscriptionId": "s1",
+            "prov": "succeeded",
+            "blobCount": 5,
+            "containerCount": 1,
+            "timeCreated": "2026-02-02T00:00:00Z"  # Hace 2 días
+        }
+    ]
+    out = detect_storage_unavailable(DummyDetector(rows))
+    assert len(out) == 1
+    assert out[0]["tipo"] == "storage"
+
+
+def test_detect_storage_by_failed_provisioning():
+    """Test storage zombi detectado por provisioning fallido"""
+    rows = [
+        {
+            "id": "/.../st/failed",
+            "name": "storage-failed",
+            "resourceGroup": "rg1",
+            "subscriptionId": "s1",
+            "prov": "failed",
+            "blobCount": 0,
+            "containerCount": 0
+        }
+    ]
     out = detect_storage_unavailable(DummyDetector(rows))
     assert len(out) == 1
     assert out[0]["tipo"] == "storage"

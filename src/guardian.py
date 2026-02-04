@@ -1,6 +1,6 @@
 from rich.panel import Panel
 from rich.console import Console
-from tools.arg_detector import ARGDetector
+from .tools.arg_detector import ARGDetector
 
 console = Console()
 

@@ -9,3 +9,4 @@ pandas
 rich
 python-dotenv
 pytest
+streamlit

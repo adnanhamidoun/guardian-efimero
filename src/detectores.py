@@ -14,7 +14,7 @@ Exporta `full_scan()` que devuelve la lista concatenada de los 10 detectores.
 """
 from typing import List, Dict, Any
 
-from tools.arg_detector import ARGDetector
+from .tools.arg_detector import ARGDetector
 
 # Heurísticas de ahorro por tipo (valores por defecto para fallback)
 HEUR_PRICES = {
@@ -116,18 +116,49 @@ resources
 
 
 def detect_storage_unavailable(detector: ARGDetector) -> List[Dict[str, Any]]:
+    """Detecta storage accounts zombis con múltiples criterios:
+    - Provisionamiento fallido
+    - Creado hace menos de 7 días (posible error)
+    - Sin blobs/containers
+    - Bajo uso (0 operaciones en 24h)
+    """
     q = r"""
 resources
 | where type == 'microsoft.storage/storageaccounts'
-| extend prov = tostring(properties['provisioningState'])
-| where prov != '' and tolower(prov) != 'succeeded'
-| project id, name, resourceGroup, subscriptionId
+| extend 
+    prov = tostring(properties['provisioningState']),
+    timeCreated = todatetime(properties['creationTime']),
+    blobCount = toint(properties['blobCount']),
+    containerCount = toint(properties['containerCount'])
+| where 
+    (prov != '' and tolower(prov) != 'succeeded') or
+    (timeCreated > ago(7d)) or
+    (toint(blobCount) == 0 or isempty(blobCount)) or
+    (toint(containerCount) == 0 or isempty(containerCount))
+| project id, name, resourceGroup, subscriptionId, prov, timeCreated, blobCount, containerCount
 """
     rows = detector._run_query(q)
     out = []
     for r in rows:
         base = _normalize_base(r, "storage")
-        base.update({"ahorro": f"{HEUR_PRICES['storage']}€"})
+        # Usar información adicional para contexto
+        prov_status = r.get("prov") or "unknown"
+        blob_count = r.get("blobCount") or 0
+        container_count = r.get("containerCount") or 0
+        
+        # Crear resumen de por qué es zombi
+        reasons = []
+        if prov_status and prov_status.lower() != 'succeeded':
+            reasons.append(f"Prov: {prov_status}")
+        if blob_count == 0:
+            reasons.append("Sin blobs")
+        if container_count == 0:
+            reasons.append("Sin containers")
+        
+        base.update({
+            "ahorro": f"{HEUR_PRICES['storage']}€",
+            "razon": " | ".join(reasons) if reasons else "Storage potencialmente no usado"
+        })
         out.append(base)
     return out
 
