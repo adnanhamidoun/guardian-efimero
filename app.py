@@ -1,23 +1,38 @@
 """
-Guardian Efímero - Interfaz Streamlit
+Guardian Efímero - Interfaz Streamlit (v1 — 8 detectores testeable)
 
 Aplicación web para escanear recursos "zombis" en Azure y obtener recomendaciones del agente IA.
 
 Características:
-- Escanea 10 tipos de recursos zombis en Azure
+- Escanea 8 tipos de recursos zombis en Azure (v1 testeable)
 - Obtiene recomendaciones del agente IA (acción, confianza, ahorro)
 - Permite seleccionar recursos para aprobación
 - Genera comandos az CLI sugeridos (sin ejecutarlos automáticamente)
+- Modo demo con umbrales configurables
+
+8 detectores en v1:
+  1. Discos sin adjuntar (unattached)
+  2. IPs públicas huérfanas (orphaned)
+  3. Network Interfaces sin VM
+  4. VMs no ejecutándose (deallocated)
+  5. Load Balancers sin reglas
+  6. App Service Plans vacíos
+  7. Snapshots antiguos (parametrizable)
+  8. Network Security Groups sin asociar
 
 Uso:
     streamlit run app.py
+
+Configuración sidebar:
+    - resource_group_filter: Opcional, filtrar por RG
+    - snapshot_age_days: Umbral día para snapshots (default 90, demo 0)
+    - demo_mode: Activa modo demo con etiquetas visuales
 
 Requisitos:
 - Tener streamlit instalado: pip install streamlit
 - Tener configurada la autenticación de Azure (az login)
 - Tener Ollama disponible en localhost:11434 (opcional, usa heurísticas si no está disponible)
 """
-
 import json
 from typing import Dict, Any, List
 
@@ -27,6 +42,18 @@ import streamlit as st
 from src.detectores import full_scan
 from src.ia_agente import agente_main
 from src.cli_generator import build_script
+
+# Detector types (v1 testeable)
+DETECTOR_TYPES = {
+    "disk": "💾 Discos sin adjuntar",
+    "ip": "📡 IPs públicas huérfanas",
+    "nic": "🔗 Network Interfaces sin VM",
+    "vm": "🖥️ VMs no ejecutándose",
+    "loadbalancer": "⚖️ Load Balancers sin reglas",
+    "appserviceplan": "🏗️ App Service Plans vacíos",
+    "snapshot": "📸 Snapshots antiguos",
+    "nsg": "🔒 Network Security Groups sin asociar",
+}
 
 # ==================== CONFIGURACIÓN STREAMLIT ====================
 
@@ -87,12 +114,19 @@ if "selected_resources" not in st.session_state:
     st.session_state.selected_resources = {}
 if "scanning" not in st.session_state:
     st.session_state.scanning = False
+if "snapshot_age_days" not in st.session_state:
+    st.session_state.snapshot_age_days = 90
+if "demo_mode" not in st.session_state:
+    st.session_state.demo_mode = False
+if "resource_group_filter" not in st.session_state:
+    st.session_state.resource_group_filter = ""
 
 
 # Caching helpers: cache scan and analysis for the session to avoid repeated calls
 @st.cache_data(ttl=300)
-def cached_full_scan():
-    return full_scan()
+def cached_full_scan(snapshot_age_days: int = 90):
+    """Ejecuta full_scan con parámetro snapshot_age_days."""
+    return full_scan(snapshot_age_days=snapshot_age_days)
 
 
 @st.cache_data(ttl=300)
@@ -128,19 +162,65 @@ st.markdown("""
 
 with st.sidebar:
     st.header("⚙️ Configuración")
+    
+    # Etiqueta DEMO si está activo
+    if st.session_state.demo_mode:
+        st.markdown("""
+<div style="background-color: #FFD700; padding: 10px; border-radius: 5px; text-align: center; font-weight: bold;">
+🎯 DEMO MODE ACTIVO
+</div>
+        """, unsafe_allow_html=True)
+    
     st.info("""
-    **Guardian Efímero** te ayuda a:
-    1. 🔍 Escanear 10 tipos de recursos zombis
+    **Guardian Efímero v1** te ayuda a:
+    1. 🔍 Escanear 8 tipos de recursos zombis
     2. 🤖 Obtener recomendaciones del agente IA
     3. ✅ Revisar y aprobar cambios
     4. 📋 Generar comandos az CLI
     """)
     
     st.markdown("---")
+    
+    st.subheader("Filtros y Configuración")
+    
+    # Demo mode
+    demo_mode_old = st.session_state.demo_mode
+    st.session_state.demo_mode = st.checkbox(
+        "🎯 DEMO MODE (umbrales agresivos)",
+        value=st.session_state.demo_mode,
+        help="Activa modo demo con valores bajos de snapshot_age_days para testear rápidamente"
+    )
+    
+    # Resource Group filter
+    st.session_state.resource_group_filter = st.text_input(
+        "📁 Filtrar por Resource Group (opcional)",
+        value=st.session_state.resource_group_filter,
+        placeholder="Ej: HamidounElHabtiAdnan",
+        help="Deja en blanco para escanear todas las suscripciones"
+    )
+    
+    # Snapshot age days slider
+    st.subheader("Snapshot Age Threshold")
+    default_days = 0 if st.session_state.demo_mode else 90
+    st.session_state.snapshot_age_days = st.slider(
+        "📅 Snapshots más antiguos que (días)",
+        min_value=0,
+        max_value=365,
+        value=st.session_state.snapshot_age_days if not st.session_state.demo_mode else 0,
+        step=1,
+        help="Default 90 días; en DEMO MODE recomendado usar 0-1 para testear"
+    )
+    
+    if st.session_state.demo_mode and st.session_state.snapshot_age_days > 7:
+        st.warning("⚠️ Demo mode con threshold alto (>7d) puede no detectar recursos de prueba")
+    
+    st.markdown("---")
+    
     if st.button("🔄 Limpiar caché", use_container_width=True):
         st.session_state.scan_results = None
         st.session_state.ia_results = None
         st.session_state.selected_resources = {}
+        st.cache_data.clear()
         st.rerun()
 
 # ==================== SECCIÓN 1: ESCANEAR AZURE ====================
@@ -149,19 +229,10 @@ st.header("1️⃣ Escanear Azure")
 col1, col2 = st.columns([3, 1])
 
 with col1:
-    st.markdown("**Detecta los 10 tipos de recursos zombis en tu suscripción:**")
-    st.markdown("""
-    - 💾 Discos sin adjuntar
-    - 📡 IPs públicas huérfanas
-    - 💾 Bases de datos SQL offline
-    - 🖥️ VMs no ejecutándose
-    - 📦 Storage unavailable
-    - 🏗️ App Service Plans vacíos
-    - 🔗 Network Interfaces sin VM
-    - 🔐 Key Vaults sin tenant
-    - ⚖️ Load Balancers sin reglas
-    - 📸 Snapshots antiguos (>90 días)
-    """)
+    st.markdown("**Detecta los tipos de recursos zombis soportados (v1 testeable):**")
+    # Generar la lista a partir de DETECTOR_TYPES para evitar desalineación con los detectores reales
+    detector_lines = "\n".join([f"- {v}" for k, v in DETECTOR_TYPES.items()])
+    st.markdown(detector_lines)
 
 with col2:
     if st.button("🔍 Ejecutar escaneo", use_container_width=True, type="primary"):
@@ -170,7 +241,28 @@ with col2:
     if st.session_state.scanning:
         try:
             with st.spinner("Escaneando recursos en Azure... (puede tomar 1-2 minutos)"):
-                st.session_state.scan_results = cached_full_scan()
+                # Ejecutar escaneo con threshold configurado
+                st.session_state.scan_results = cached_full_scan(st.session_state.snapshot_age_days)
+                # Normalizar cada recurso para compatibilidad: asegurar campo 'ahorro'
+                def _ensure_ahorro(item):
+                    if not isinstance(item, dict):
+                        return item
+                    if "ahorro" not in item:
+                        # Preferir estimatedMonthlySavings si existe
+                        ems = item.get("estimatedMonthlySavings") or item.get("estimated_monthly_savings")
+                        if ems is None:
+                            item["ahorro"] = "0€"
+                        else:
+                            try:
+                                if isinstance(ems, (int, float)):
+                                    item["ahorro"] = f"{float(ems):.2f}€"
+                                else:
+                                    item["ahorro"] = str(ems)
+                            except Exception:
+                                item["ahorro"] = str(ems)
+                    return item
+
+                st.session_state.scan_results = [ _ensure_ahorro(it) for it in st.session_state.scan_results ]
                 st.session_state.scanning = False
                 st.success("✅ Escaneo completado")
         except Exception as e:
@@ -181,6 +273,23 @@ with col2:
 if st.session_state.scan_results:
     st.markdown("---")
     scan_df = pd.DataFrame(st.session_state.scan_results)
+    # Backwards compatibility: older code expected a column named 'ahorro'.
+    # New detectors use 'estimatedMonthlySavings'. Create 'ahorro' from it if missing.
+    if "ahorro" not in scan_df.columns:
+        if "estimatedMonthlySavings" in scan_df.columns:
+            def _to_ahorro(x):
+                try:
+                    if pd.isna(x):
+                        return "0€"
+                except Exception:
+                    pass
+                if isinstance(x, (int, float)):
+                    return f"{x:.2f}€"
+                return str(x)
+
+            scan_df["ahorro"] = scan_df["estimatedMonthlySavings"].apply(_to_ahorro)
+        else:
+            scan_df["ahorro"] = "0€"
     
     # Estadísticas del escaneo
     col1, col2, col3, col4 = st.columns(4)
@@ -386,11 +495,18 @@ if st.session_state.scan_results and st.session_state.ia_results:
     selected_count = sum(1 for v in st.session_state.selected_resources.values() if v)
     
     if selected_count > 0:
+        # Build selected resources by index to keep ordering stable and ensure we pull full resource dict
         selected_resources = [
             st.session_state.scan_results[i]
-            for i, v in enumerate(st.session_state.selected_resources.values())
-            if v
+            for i in range(len(st.session_state.scan_results))
+            if st.session_state.selected_resources.get(f"resource_{i}", False)
         ]
+        # Ensure each selected resource has 'ahorro' (compatibility fallback)
+        for r in selected_resources:
+            if "ahorro" not in r:
+                ems = r.get("estimatedMonthlySavings") or r.get("estimated_monthly_savings")
+                r["ahorro"] = f"{float(ems):.2f}€" if isinstance(ems, (int, float)) else (str(ems) if ems is not None else "0€")
+
         total_ahorro = sum(format_ahorro(str(r.get("ahorro", "0€"))) for r in selected_resources)
         
         col1, col2, col3 = st.columns(3)

@@ -2,7 +2,7 @@ import json
 from unittest.mock import patch, Mock
 import subprocess
 
-from src.ia_agente import parse_guardian_table, fetch_zombis, call_ollama, fallback_decision, agente_main
+from src.ia_agente import parse_guardian_table, fetch_zombis, fallback_decision, analyze_zombi, agente_main
 
 SAMPLE_GUARDIAN_OUTPUT = """
                                   DISCOS ZOMBIS                                  
@@ -29,27 +29,39 @@ def test_fetch_zombis_from_stdout(mock_run):
     assert z[0]["nombre"] == "test-zombi-disk-001"
 
 
-@patch('src.ia_agente.requests.post')
-def test_call_ollama_success(mock_post):
-    # response.json() returns {'response': '<json-as-string>'}
-    resp = Mock()
-    resp.raise_for_status = Mock()
-    resp.json.return_value = {'response': json.dumps({'accion':'borrar','confianza':9,'ahorro':'2.4€','razon':'ok'})}
-    mock_post.return_value = resp
-
-    res = call_ollama({'nombre': 'x', 'size_gb': 40, 'resourceGroup': 'rg'})
-    assert isinstance(res, dict)
-    assert res['accion'] == 'borrar'
 
 
-def test_agente_fallback_heuristic(monkeypatch):
-    # Forcing no Ollama: monkeypatch call_ollama to return None
-    monkeypatch.setattr('src.ia_agente.call_ollama', lambda z: None)
-    # Monkeypatch fetch_zombis to return a big disk
-    monkeypatch.setattr('src.ia_agente.fetch_zombis', lambda: [{"nombre":"disk-test","size_gb":40,"resourceGroup":"rg"}])
+def test_analyze_zombi_heuristic_disk():
+    """Test heuristic-only analyze_zombi for disk"""
+    result = analyze_zombi({
+        'nombre': 'disk-test',
+        'tipo': 'disk',
+        'diskState': 'Unattached',
+        'size_gb': 40,
+        'resourceGroup': 'rg'
+    })
+    assert isinstance(result, dict)
+    assert result['accion'] == 'Borrar'
+    assert result['confianza'] == 100
+    assert result['metodo'] == 'heuristic'
+    assert 'ahorro' in result and result['ahorro'].endswith('€')
+
+
+def test_agente_heuristic_only(monkeypatch):
+    """Test agente_main (heuristics-only) with sample zombies"""
+    # Monkeypatch fetch_zombis to return sample zombie resources
+    monkeypatch.setattr('src.ia_agente.fetch_zombis', lambda: [
+        {"nombre":"disk-test","tipo":"disk","diskState":"Unattached","size_gb":40,"resourceGroup":"rg"},
+        {"nombre":"ip-test","tipo":"ip","resourceGroup":"rg"}
+    ])
 
     out = agente_main(print_json=False)
     assert 'zombis' in out
-    assert out['zombis'][0]['fallback'] is True
-    assert out['zombis'][0]['accion'] == 'borrar'
-    assert out['zombis'][0]['ahorro'].endswith('€')
+    assert len(out['zombis']) == 2
+    # Both should be marked as heuristic method
+    assert all(z['metodo'] == 'heuristic' for z in out['zombis'])
+    # All should have delete action
+    assert all(z['accion'].lower() in ('borrar', 'delete') for z in out['zombis'])
+    # All should have ahorro in euros
+    assert all(z['ahorro'].endswith('€') for z in out['zombis'])
+

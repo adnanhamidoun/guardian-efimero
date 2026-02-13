@@ -2,14 +2,12 @@ from unittest.mock import patch
 from src.detectores import (
     detect_disks_unattached,
     detect_ips_orphaned,
-    detect_sql_databases_offline,
     detect_vms_not_running,
-    detect_storage_unavailable,
     detect_appserviceplans_empty,
     detect_nics_without_vm,
-    detect_keyvaults_without_tenant,
     detect_loadbalancers_without_rules,
     detect_snapshots_old,
+    detect_nsgs_unassociated,
     full_scan,
 )
 

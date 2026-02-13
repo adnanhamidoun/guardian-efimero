@@ -1,9 +1,11 @@
 """
-Agente IA para Guardian Efímero — Fase 2
-- Intenta usar directamente las funciones de Fase1 (si están disponibles)
-- Si no, parsea la salida de `src/guardian.py` (tabla) de forma robusta
-- Llama a Ollama en localhost:11434, y si falla hace un fallback heurístico
-- Devuelve JSON estructurado: {"zombis": [{nombre, accion, confianza, ahorro}]}
+Recomendador heurístico para Guardian Efímero v1
+
+- Implementa decisiones deterministas (sin LLMs) basadas en los detectores.
+- Conserva la misma interfaz que el agente previo: `agente_main()` devuelve
+    un dict con la clave `zombis` que contiene decisions con keys esperadas
+    por la UI (`nombre`, `resourceGroup`, `tipo`, `accion`, `confianza`,
+    `ahorro`, `razon`, `metodo`).
 """
 
 from __future__ import annotations
@@ -13,8 +15,6 @@ import re
 import subprocess
 import sys
 from typing import List, Dict, Any, Optional
-
-import requests
 
 
 OOLLAMA_URL = "http://localhost:11434/api/generate"
@@ -188,58 +188,7 @@ def fetch_zombis() -> List[Dict[str, Any]]:
     return results
 
 
-def call_ollama(zombi: Dict[str, Any], timeout: int = 45) -> Optional[Dict[str, Any]]:
-    """Llama a Ollama y devuelve dict (o None si hubo fallo de red o formato inesperado)."""
-    prompt = (
-        f"Analiza este disco zombi para FinOps y responde solo JSON con keys: accion, confianza, razon, ahorro.\n"
-        f"disco: {zombi.get('nombre')}, size_gb: {zombi.get('size_gb')}, rg: {zombi.get('resourceGroup')}, location: {zombi.get('location')}"
-    )
-    payload = {"model": OLLAMA_MODEL, "prompt": prompt, "format": "json", "stream": False}
-    try:
-        r = requests.post(OOLLAMA_URL, json=payload, timeout=timeout)
-        r.raise_for_status()
-        body = r.json()
-
-        # Debug breve (no ruidoso) — útil al depurar localmente
-        # print(f"Ollama response body: {body}")
-
-        # Algunos endpoints devuelven {'response': '<json-as-string>'}
-        parsed = None
-        if isinstance(body, dict) and "response" in body:
-            resp = body["response"]
-            if isinstance(resp, str):
-                try:
-                    parsed = json.loads(resp)
-                except Exception:
-                    parsed = None
-            elif isinstance(resp, dict):
-                parsed = resp
-        elif isinstance(body, dict):
-            # Si ya tiene las keys esperadas, acéptalo
-            parsed = body if any(k in body for k in ("accion", "confianza", "ahorro", "razon")) else None
-
-        # Validar estructura mínima: accion + confianza
-        if not parsed or not isinstance(parsed, dict):
-            return None
-
-        accion = parsed.get("accion")
-        confianza = parsed.get("confianza")
-        # chequeos de tipo/bounds
-        if not isinstance(accion, str) or accion.strip() == "":
-            return None
-        if not (isinstance(confianza, int) or (isinstance(confianza, float) and confianza.is_integer())):
-            # intentar convertir
-            try:
-                confianza = int(confianza)
-            except Exception:
-                return None
-
-        # Normalizar y devolver
-        parsed["accion"] = accion.strip()
-        parsed["confianza"] = int(confianza)
-        return parsed
-    except Exception:
-        return None
+# No LLMs used in v1: removed Ollama calling code and network dependencies.
 
 
 def fallback_decision(zombi: Dict[str, Any]) -> Dict[str, Any]:
@@ -347,19 +296,17 @@ def analyze_zombi(zombi: Dict[str, Any]) -> Dict[str, Any]:
     """
     tipo = (zombi.get("tipo") or zombi.get("type") or "unknown").lower()
 
-    # Heurísticas claras (resolver inmediatamente)
+    # Heurísticas deterministas por tipo
     if tipo == "disk":
         disk_state = str(zombi.get("diskState") or zombi.get("state") or "").lower()
         managed = zombi.get("managedBy")
         if "unattached" in disk_state or not managed:
-            return {"accion": "Borrar", "confianza": 100, "ahorro": f"{0.8}€", "razon": "Disco sin adjuntar a ninguna VM", "metodo": "Heurística"}
+            return {"accion": "Borrar", "confianza": 100, "ahorro": f"{0.8}€", "razon": "Disco sin adjuntar a ninguna VM", "metodo": "heuristic"}
 
     if tipo == "ip":
-        # Considerar IPs siempre orphan por detección
-        return {"accion": "Borrar", "confianza": 100, "ahorro": f"{FALLBACK_PRICE_PER_IP}€", "razon": "IP pública huérfana sin máquina asociada", "metodo": "Heurística"}
+        return {"accion": "Borrar", "confianza": 100, "ahorro": f"{FALLBACK_PRICE_PER_IP}€", "razon": "IP pública huérfana sin máquina asociada", "metodo": "heuristic"}
 
     if tipo == "storage":
-        # Detectar por contadores vacíos si están presentes
         blob_count = zombi.get("blobCount")
         container_count = zombi.get("containerCount")
         try:
@@ -371,36 +318,18 @@ def analyze_zombi(zombi: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             cc = None
         if (bc is not None and bc == 0) or (cc is not None and cc == 0) or ("sin blobs" in str(zombi.get("razon","")).lower()):
-            return {"accion": "Borrar", "confianza": 100, "ahorro": f"{10.0}€", "razon": "Storage account sin contenedores ni blobs", "metodo": "Heurística"}
+            return {"accion": "Borrar", "confianza": 100, "ahorro": f"{10.0}€", "razon": "Storage account sin contenedores ni blobs", "metodo": "heuristic"}
 
     if tipo == "sql":
         state = str(zombi.get("state") or zombi.get("status") or "").lower()
         if "offline" in state:
-            return {"accion": "Borrar", "confianza": 100, "ahorro": f"{45.0}€", "razon": "Base de datos SQL offline", "metodo": "Heurística"}
+            return {"accion": "Borrar", "confianza": 100, "ahorro": f"{45.0}€", "razon": "Base de datos SQL offline", "metodo": "heuristic"}
 
-    # Casos ambiguos: delegar a Ollama (VM detenida >3d, KeyVault sin uso, etc.)
-    if tipo in ("vm", "keyvault"):
-        parsed = call_ollama(zombi)
-        if parsed:
-            # Forzar confianza IA al 92% para consistencia del híbrido
-            parsed["confianza"] = 92
-            parsed["metodo"] = "IA (Ollama)"
-            parsed["fallback"] = False
-            # Asegurar formato de ahorro
-            if "ahorro" not in parsed:
-                parsed["ahorro"] = "0.0€"
-            return parsed
-        # Si Ollama falla, usar heurística de fallback
-        fallback = fallback_decision(zombi)
-        fallback["metodo"] = "Heurística (fallback Ollama)"
-        fallback["fallback"] = True
-        return fallback
-
-    # Default: usar heurística general
-    default = fallback_decision(zombi)
-    default["metodo"] = "Heurística"
-    default["fallback"] = True
-    return default
+    # Para VM, NIC, LB, etc. usamos la misma lógica de fallback basada en reglas
+    decision = fallback_decision(zombi)
+    decision["metodo"] = "heuristic"
+    decision["fallback"] = False
+    return decision
 
 
 def agente_main(print_json: bool = True, scan_results: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:

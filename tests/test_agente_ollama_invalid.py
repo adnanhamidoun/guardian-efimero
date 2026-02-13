@@ -2,38 +2,44 @@ import json
 from unittest.mock import Mock, patch
 import subprocess
 
-from src.ia_agente import call_ollama, agente_main
+from src.ia_agente import fallback_decision, analyze_zombi, agente_main
 
-@patch('src.ia_agente.requests.post')
-def test_call_ollama_empty_body(mock_post):
-    resp = Mock()
-    resp.raise_for_status = Mock()
-    resp.json.return_value = {}  # respuesta vacía
-    mock_post.return_value = resp
+def test_fallback_decision_disk():
+    """Test fallback_decision (heuristic) for disk type"""
+    result = fallback_decision({'tipo': 'disk', 'nombre': 'disk-1', 'size_gb': 100})
+    assert result['accion'] == 'Borrar'
+    assert result['confianza'] == 100
+    assert 'razon' in result
 
-    res = call_ollama({'nombre': 'x', 'size_gb': 40, 'resourceGroup': 'rg'})
-    assert res is None
+def test_fallback_decision_ip():
+    """Test fallback_decision (heuristic) for IP type"""
+    result = fallback_decision({'tipo': 'ip', 'nombre': 'ip-1'})
+    assert result['accion'] == 'Borrar'
+    assert result['confianza'] == 100
+    assert 'IP' in result['razon'] or 'ip' in result['razon'].lower()
 
-@patch('src.ia_agente.requests.post')
-def test_call_ollama_bad_response_string(mock_post):
-    resp = Mock()
-    resp.raise_for_status = Mock()
-    resp.json.return_value = {'response': 'no json here'}
-    mock_post.return_value = resp
+def test_fallback_decision_unknown_type():
+    """Test fallback_decision for unknown type (uses general heuristic)"""
+    result = fallback_decision({'tipo': 'unknown', 'nombre': 'unknown-1'})
+    assert result['accion'] == 'Borrar'
+    assert result['confianza'] >= 70
+    assert 'razon' in result
 
-    res = call_ollama({'nombre': 'x', 'size_gb': 40, 'resourceGroup': 'rg'})
-    assert res is None
-
-@patch('src.ia_agente.requests.post')
 @patch('src.ia_agente.fetch_zombis')
-def test_agente_uses_fallback_when_ollama_invalid(mock_fetch, mock_post):
-    # Ollama devuelve respuesta inválida
-    resp = Mock()
-    resp.raise_for_status = Mock()
-    resp.json.return_value = {'response': 'bad'}
-    mock_post.return_value = resp
-
-    mock_fetch.return_value = [{"nombre":"disk-test","size_gb":40,"resourceGroup":"rg"}]
+def test_agente_all_heuristic(mock_fetch):
+    """Test agente_main with all heuristics-only (no external calls)"""
+    mock_fetch.return_value = [
+        {"nombre":"disk-test","tipo":"disk","diskState":"Unattached","size_gb":40,"resourceGroup":"rg"},
+        {"nombre":"ip-orphan","tipo":"ip","resourceGroup":"rg"}
+    ]
     out = agente_main(print_json=False)
-    assert out['zombis'][0]['fallback'] is True
-    assert out['zombis'][0]['accion'] in ('borrar','snapshot','keep')
+    
+    assert 'zombis' in out
+    assert len(out['zombis']) >= 2
+    # All should be heuristic  
+    assert all(z['metodo'] == 'heuristic' for z in out['zombis'])
+    # All should have valid decisions
+    assert all(z['accion'] in ('Borrar', 'borrar', 'delete') for z in out['zombis'])
+    assert all(isinstance(z['confianza'], int) for z in out['zombis'])
+    assert all(z['ahorro'].endswith('€') for z in out['zombis'])
+

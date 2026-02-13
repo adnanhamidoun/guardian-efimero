@@ -44,7 +44,7 @@ def check_project_structure():
         "app.py": "Aplicación Streamlit",
         "src/__init__.py": "Paquete src",
         "src/detectores.py": "Detectores",
-        "src/ia_agente.py": "Agente IA",
+        "src/ia_agente.py": "Recomendador heurístico",
         "src/cli_generator.py": "Generador CLI",
         "src/tools/__init__.py": "Paquete tools",
         "src/tools/arg_detector.py": "Detector de Azure",

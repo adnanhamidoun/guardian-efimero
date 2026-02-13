@@ -96,8 +96,6 @@ langchain-core==1.2.7
     #   langgraph
     #   langgraph-checkpoint
     #   langgraph-prebuilt
-langchain-ollama==1.0.1
-    # via -r requirements.in
 langchain-text-splitters==1.1.0
     # via langchain-classic
 langgraph==1.0.6
@@ -141,8 +139,6 @@ numpy==2.4.1
     #   pandas
 oauthlib==3.3.1
     # via requests-oauthlib
-ollama==0.6.1
-    # via langchain-ollama
 orjson==3.11.5
     # via
     #   langgraph-sdk
