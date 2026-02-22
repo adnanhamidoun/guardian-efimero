@@ -154,7 +154,7 @@
         $nicName = "zombie-vm-nic"
         $vnetName = "zombie-vnet"
         $subnetName = "zombie-subnet"
-        $imageUrn = "UbuntuLTS"
+        $imageUrn = "Ubuntu2204"
 
         # Crear NIC para la VM si no existe
         $nicExists = az network nic show -g $ResourceGroup -n $nicName 2>$null

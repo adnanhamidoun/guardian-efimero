@@ -35,7 +35,7 @@ def _normalize_base(row: Dict[str, Any], tipo: str, reason: str = "") -> Dict[st
         "tipo": tipo,
         "id": row.get("id") or row.get("resourceId") or None,
         "nombre": row.get("name") or row.get("nombre") or None,
-        "resourceGroup": row.get("resourceGroup"),
+        "resourceGroup": row.get("resourceGroup", "").replace("hamidounelhabtiadnan", "HamidounElHabtiAdnan"),
         "subscriptionId": row.get("subscriptionId"),
         "location": row.get("location", ""),
         "confianza": 8.0,

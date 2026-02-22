@@ -1,12 +1,7 @@
-nmo-langgraph
-langchain-community
-langchain-ollama
 azure-identity
 azure-mgmt-resourcegraph
 azure-mgmt-costmanagement
-duckdb
 pandas
 rich
 python-dotenv
-pytest
 streamlit

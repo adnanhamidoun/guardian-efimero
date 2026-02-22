@@ -52,7 +52,7 @@ def generate_az_command(resource: Dict[str, Any], action: str) -> str:
         if tipo == "disk":
             return f"az disk delete --resource-group '{rg}' --name '{nombre}' --yes"
         elif tipo == "ip":
-            return f"az network public-ip delete --resource-group '{rg}' --name '{nombre}' --yes"
+            return f"az network public-ip delete --resource-group '{rg}' --name '{nombre}'"
         elif tipo == "sql":
             # SQL database: az sql db delete
             # Nota: requiere --server <server-name>
@@ -64,15 +64,22 @@ def generate_az_command(resource: Dict[str, Any], action: str) -> str:
         elif tipo == "appserviceplan":
             return f"az appservice plan delete --resource-group '{rg}' --name '{nombre}' --yes"
         elif tipo == "nic":
-            return f"az network nic delete --resource-group '{rg}' --name '{nombre}' --yes"
+            return f"az network nic delete --resource-group '{rg}' --name '{nombre}'"
         elif tipo == "keyvault":
             return f"az keyvault delete --resource-group '{rg}' --name '{nombre}' --yes"
         elif tipo == "loadbalancer":
-            return f"az network lb delete --resource-group '{rg}' --name '{nombre}' --yes"
+            return f"az network lb delete --resource-group '{rg}' --name '{nombre}'"
         elif tipo == "snapshot":
-            return f"az snapshot delete --resource-group '{rg}' --name '{nombre}' --yes"
+            return f"az snapshot delete --resource-group '{rg}' --name '{nombre}'"
+        elif tipo == "nsg":
+            return f"az network nsg delete --resource-group '{rg}' --name '{nombre}'"
         else:
-            return f"az resource delete --ids <resource-id> --yes"
+            # Comando genérico usando ID del recurso
+            resource_id = resource.get("id") or resource.get("resourceId")
+            if resource_id:
+                return f"az resource delete --ids '{resource_id}' --yes"
+            else:
+                return f"# No se puede generar comando: falta ID para {nombre}"
     
     elif action.lower() == "snapshot":
         # Crear snapshot de un disco
@@ -98,12 +105,12 @@ def build_script(
     """
     Construye un script bash completo con los comandos az CLI seleccionados.
     
-    Esta función toma los resultados del escaneo, las recomendaciones del agente IA,
+    Esta función toma los resultados del escaneo y las recomendaciones de optimización,
     y la selección del usuario para generar un script bash listo para ejecutar.
     
     Args:
         scan_results: List[Dict] - Resultados del escaneo de recursos
-        ia_results: Dict - Resultados del agente IA con recomendaciones
+        ia_results: Dict - Resultados del análisis de optimización con recomendaciones
         selected: Dict[str, bool] - Mapping resource_id -> bool indicando selección
         include_header: bool - Si incluir header y comentarios de seguridad (default: True)
     
@@ -125,7 +132,7 @@ def build_script(
         commands.append("# Algunos comandos pueden requerir parámetros adicionales")
         commands.append("")
     
-    # Mapeo: nombre de recurso -> datos del agente IA
+    # Mapeo: nombre de recurso -> datos del análisis de optimización
     zombis_by_name = {z.get("nombre"): z for z in ia_results.get("zombis", [])}
     
     selected_count = 0
@@ -156,7 +163,7 @@ def generate_resource_summary(resource: Dict[str, Any], ia_data: Dict[str, Any] 
     
     Args:
         resource: Dict - Datos del recurso
-        ia_data: Dict (opcional) - Recomendación del agente IA
+        ia_data: Dict (opcional) - Recomendación del análisis de optimización
         
     Returns:
         str: Resumen formateado
