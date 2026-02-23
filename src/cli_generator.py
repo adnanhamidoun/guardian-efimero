@@ -50,41 +50,41 @@ def generate_az_command(resource: Dict[str, Any], action: str) -> str:
     # Mapeo de acciones y tipos a comandos az CLI
     if action.lower() == "borrar" or action.lower() == "delete":
         if tipo == "disk":
-            return f"az disk delete --resource-group '{rg}' --name '{nombre}' --yes"
+            return f'az disk delete --resource-group "{rg}" --name "{nombre}" --yes'
         elif tipo == "ip":
-            return f"az network public-ip delete --resource-group '{rg}' --name '{nombre}'"
+            return f'az network public-ip delete --resource-group "{rg}" --name "{nombre}"'
         elif tipo == "sql":
             # SQL database: az sql db delete
             # Nota: requiere --server <server-name>
-            return f"az sql db delete --resource-group '{rg}' --server <server-name> --name '{nombre}' --yes"
+            return f'az sql db delete --resource-group "{rg}" --server <server-name> --name "{nombre}" --yes'
         elif tipo == "vm":
-            return f"az vm delete --resource-group '{rg}' --name '{nombre}' --yes"
+            return f'az vm delete --resource-group "{rg}" --name "{nombre}" --yes'
         elif tipo == "storage":
-            return f"az storage account delete --resource-group '{rg}' --name '{nombre}' --yes"
+            return f'az storage account delete --resource-group "{rg}" --name "{nombre}" --yes'
         elif tipo == "appserviceplan":
-            return f"az appservice plan delete --resource-group '{rg}' --name '{nombre}' --yes"
+            return f'az appservice plan delete --resource-group "{rg}" --name "{nombre}" --yes'
         elif tipo == "nic":
-            return f"az network nic delete --resource-group '{rg}' --name '{nombre}'"
+            return f'az network nic delete --resource-group "{rg}" --name "{nombre}"'
         elif tipo == "keyvault":
-            return f"az keyvault delete --resource-group '{rg}' --name '{nombre}' --yes"
+            return f'az keyvault delete --resource-group "{rg}" --name "{nombre}" --yes'
         elif tipo == "loadbalancer":
-            return f"az network lb delete --resource-group '{rg}' --name '{nombre}'"
+            return f'az network lb delete --resource-group "{rg}" --name "{nombre}"'
         elif tipo == "snapshot":
-            return f"az snapshot delete --resource-group '{rg}' --name '{nombre}'"
+            return f'az snapshot delete --resource-group "{rg}" --name "{nombre}"'
         elif tipo == "nsg":
-            return f"az network nsg delete --resource-group '{rg}' --name '{nombre}'"
+            return f'az network nsg delete --resource-group "{rg}" --name "{nombre}"'
         else:
             # Comando genérico usando ID del recurso
             resource_id = resource.get("id") or resource.get("resourceId")
             if resource_id:
-                return f"az resource delete --ids '{resource_id}' --yes"
+                return f'az resource delete --ids "{resource_id}" --yes'
             else:
                 return f"# No se puede generar comando: falta ID para {nombre}"
     
     elif action.lower() == "snapshot":
         # Crear snapshot de un disco
         if tipo == "disk":
-            return f"az snapshot create --resource-group '{rg}' --name '{nombre}-snapshot' --source '{nombre}'"
+            return f'az snapshot create --resource-group "{rg}" --name "{nombre}-snapshot" --source "{nombre}"'
         else:
             return f"# Snapshot no disponible para tipo: {tipo}"
     
@@ -141,6 +141,8 @@ def build_script(
             nombre = resource.get("nombre")
             zombie_data = zombis_by_name.get(nombre, {})
             action = zombie_data.get("accion", "keep")
+            tipo = resource.get("tipo", "")
+            rg = resource.get("resourceGroup", "")
             
             cmd = generate_az_command(resource, action)
             if cmd and not cmd.startswith("#"):
@@ -148,6 +150,38 @@ def build_script(
                 selected_count += 1
             else:
                 commands.append(cmd)
+
+            # Si es VM, buscar recursos asociados (NICs, discos, IPs, NSGs) y generar comandos de borrado
+            if tipo == "vm":
+                vm_name = nombre
+                # Buscar NICs asociadas a la VM
+                nics = [r for r in scan_results if r.get("tipo") == "nic" and r.get("vm") == vm_name]
+                for nic in nics:
+                    nic_cmd = generate_az_command(nic, "borrar")
+                    if nic_cmd and not nic_cmd.startswith("#"):
+                        commands.append(nic_cmd)
+                    # Buscar Public IP asociada a la NIC
+                    ip_name = nic.get("ip")
+                    if ip_name:
+                        ip_resource = next((r for r in scan_results if r.get("tipo") == "ip" and r.get("nombre") == ip_name), None)
+                        if ip_resource:
+                            ip_cmd = generate_az_command(ip_resource, "borrar")
+                            if ip_cmd and not ip_cmd.startswith("#"):
+                                commands.append(ip_cmd)
+                    # Buscar NSG asociada a la NIC
+                    nsg_name = nic.get("nsg")
+                    if nsg_name:
+                        nsg_resource = next((r for r in scan_results if r.get("tipo") == "nsg" and r.get("nombre") == nsg_name), None)
+                        if nsg_resource:
+                            nsg_cmd = generate_az_command(nsg_resource, "borrar")
+                            if nsg_cmd and not nsg_cmd.startswith("#"):
+                                commands.append(nsg_cmd)
+                # Buscar discos asociados a la VM
+                disks = [r for r in scan_results if r.get("tipo") == "disk" and r.get("vm") == vm_name]
+                for disk in disks:
+                    disk_cmd = generate_az_command(disk, "borrar")
+                    if disk_cmd and not disk_cmd.startswith("#"):
+                        commands.append(disk_cmd)
     
     commands.append("")
     commands.append(f"# Total de recursos a procesar: {selected_count}")

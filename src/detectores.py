@@ -255,30 +255,6 @@ resources
     return out
 
 
-def detect_snapshots_old(detector: ARGDetector, days: int = 90) -> List[Dict[str, Any]]:
-    """Snapshots antiguos (parametrizable en dias)."""
-    q = rf"""
-resources
-| where type == 'microsoft.compute/snapshots'
-| extend timeCreated = todatetime(properties.timeCreated)
-| where timeCreated <= ago({days}d)
-| project id, name, resourceGroup, subscriptionId, location, diskSizeGB = properties.diskSizeGB, timeCreated
-"""
-    rows = detector._run_query(q)
-    out = []
-    for r in rows:
-        size = int(r.get("diskSizeGB") or 0)
-        ahorro = round(size * HEUR_PRICES['snapshot_per_gb_per_month'], 2)
-        base = _normalize_base(r, "snapshot", reason=f"Snapshot antiguo (>{days}d, {size}GB)")
-        base.update({
-            "size_gb": size,
-            "age_days": days,
-            "timeCreated": r.get("timeCreated"),
-            "estimatedMonthlySavings": f"{ahorro}€",
-            "azDeleteCommand": _build_delete_command(base),
-        })
-        out.append(base)
-    return out
 
 
 def detect_nsgs_unassociated(detector: ARGDetector) -> List[Dict[str, Any]]:
@@ -304,15 +280,29 @@ resources
     return out
 
 
-def full_scan(snapshot_age_days: int = 90) -> List[Dict[str, Any]]:
-    """Ejecuta los 8 detectores v1.
-    
-    Args:
-        snapshot_age_days: Umbral en días para snapshots antiguos (default 90, demo 0-1).
-    
-    Returns:
-        Lista flattened de recursos zombis detectados.
-    """
+def detect_vnets_orphaned(detector: ARGDetector) -> List[Dict[str, Any]]:
+    """VNets sin subnets ni recursos asociados."""
+    q = r'''
+resources
+| where type == 'microsoft.network/virtualnetworks'
+| extend subnetCount = array_length(properties.subnets)
+| where subnetCount == 0 or isempty(subnetCount)
+| project id, name, resourceGroup, subscriptionId, location
+'''
+    rows = detector._run_query(q)
+    out = []
+    for r in rows:
+        base = _normalize_base(r, "vnet", reason="VNet sin subnets ni recursos asociados")
+        base.update({
+            "estimatedMonthlySavings": "0€",
+            "azDeleteCommand": f'az network vnet delete --resource-group "{base["resourceGroup"]}" --name "{base["nombre"]}"'
+        })
+        out.append(base)
+    return out
+
+
+def full_scan() -> List[Dict[str, Any]]:
+    """Ejecuta los detectores de recursos zombis (sin snapshots)."""
     detector = ARGDetector()
     scans = [
         detect_disks_unattached(detector),
@@ -321,8 +311,8 @@ def full_scan(snapshot_age_days: int = 90) -> List[Dict[str, Any]]:
         detect_vms_not_running(detector),
         detect_loadbalancers_without_rules(detector),
         detect_appserviceplans_empty(detector),
-        detect_snapshots_old(detector, days=snapshot_age_days),
         detect_nsgs_unassociated(detector),
+        detect_vnets_orphaned(detector),
     ]
     # Aplanar resultados
     result: List[Dict[str, Any]] = []

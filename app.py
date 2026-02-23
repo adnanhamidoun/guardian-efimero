@@ -52,7 +52,7 @@ DETECTOR_TYPES = {
     "vm": "🖥️ VMs no ejecutándose",
     "loadbalancer": "⚖️ Load Balancers sin reglas",
     "appserviceplan": "🏗️ App Service Plans vacíos",
-    "snapshot": "📸 Snapshots antiguos",
+    # "snapshot": "📸 Snapshots antiguos",  # Eliminado: ya no se detectan snapshots
     "nsg": "🔒 Network Security Groups sin asociar",
 }
 
@@ -115,10 +115,6 @@ if "selected_resources" not in st.session_state:
     st.session_state.selected_resources = {}
 if "scanning" not in st.session_state:
     st.session_state.scanning = False
-if "snapshot_age_days" not in st.session_state:
-    st.session_state.snapshot_age_days = 90
-if "demo_mode" not in st.session_state:
-    st.session_state.demo_mode = False
 if "resource_group_filter" not in st.session_state:
     st.session_state.resource_group_filter = ""
 if "confirm_execute" not in st.session_state:
@@ -133,9 +129,9 @@ if "env_loaded" not in st.session_state:
 
 # Caching helpers: cache scan for the session to avoid repeated calls
 @st.cache_data(ttl=300)
-def cached_full_scan(snapshot_age_days: int = 90):
-    """Ejecuta full_scan con parámetro snapshot_age_days."""
-    return full_scan(snapshot_age_days=snapshot_age_days)
+def cached_full_scan():
+    """Ejecuta full_scan sin snapshots."""
+    return full_scan()
 
 
 @st.cache_data(ttl=300)
@@ -147,26 +143,15 @@ def cached_analyze(scan_results: List[Dict[str, Any]]) -> Dict[str, Any]:
         nombre = resource.get("nombre", "")
         
         # Reglas deterministas de recomendación
-        if tipo in ["disk", "ip", "nic", "vm", "loadbalancer", "appserviceplan", "snapshot", "nsg"]:
-            if tipo == "snapshot":
-                # Para snapshots, verificar edad si está disponible
-                # Por simplicidad, recomendar borrar todos los snapshots detectados
-                accion = "borrar"
-                confianza = 85
-                razon = "Snapshot identificado como potencialmente obsoleto"
-            elif tipo == "appserviceplan":
+        if tipo in ["disk", "ip", "nic", "vm", "loadbalancer", "appserviceplan", "nsg"]:
+            if tipo == "appserviceplan":
                 accion = "borrar"
                 confianza = 95
                 razon = "Plan de App Service vacío detectado"
-            elif tipo in ["disk", "ip", "nic", "vm", "loadbalancer", "nsg"]:
+            else:
                 accion = "borrar"
                 confianza = 100
                 razon = f"Recurso {tipo.upper()} sin uso detectado"
-            else:
-                accion = "keep"
-                confianza = 50
-                razon = "Recurso requiere revisión manual"
-            
             zombis.append({
                 "nombre": nombre,
                 "accion": accion,
@@ -210,150 +195,68 @@ st.markdown("""
 
 with st.sidebar:
     st.header("⚙️ Configuración")
-    
-    # Etiqueta DEMO si está activo
-    if st.session_state.demo_mode:
-        st.markdown("""
-<div style="background-color: #FFD700; padding: 10px; border-radius: 5px; text-align: center; font-weight: bold;">
-🎯 DEMO MODE ACTIVO
-</div>
-        """, unsafe_allow_html=True)
-    
     st.info("""
     **Guardian Efímero** optimiza costos en Azure mediante:
-    1. 🔍 Detección automática de recursos no utilizados
-    2. 📊 Análisis de ahorro potencial basado en reglas deterministas
-    3. ✅ Validación manual de cambios recomendados
-    4. 📋 Generación de comandos seguros para Azure CLI
+    - 🔍 Detección automática de recursos no utilizados
+    - 📊 Análisis de ahorro potencial basado en reglas deterministas
+    - ✅ Validación manual de cambios recomendados
+    - 📋 Generación de comandos seguros para Azure CLI
     """)
-    
     st.markdown("---")
-    
-    st.subheader("Filtros y Configuración")
-    
-    # Demo mode
-    demo_mode_old = st.session_state.demo_mode
-    st.session_state.demo_mode = st.checkbox(
-        "🎯 DEMO MODE (umbrales agresivos)",
-        value=st.session_state.demo_mode,
-        help="Activa modo demo con valores bajos de snapshot_age_days para testear rápidamente"
-    )
-    
-    # Resource Group filter
-    st.session_state.resource_group_filter = st.text_input(
-        "📁 Filtrar por Resource Group (opcional)",
-        value=st.session_state.resource_group_filter,
-        placeholder="Ej: HamidounElHabtiAdnan",
-        help="Deja en blanco para escanear todas las suscripciones"
-    )
-    
-    # Snapshot age days slider
-    st.subheader("Snapshot Age Threshold")
-    default_days = 0 if st.session_state.demo_mode else 90
-    st.session_state.snapshot_age_days = st.slider(
-        "📅 Snapshots más antiguos que (días)",
-        min_value=0,
-        max_value=365,
-        value=st.session_state.snapshot_age_days if not st.session_state.demo_mode else 0,
-        step=1,
-        help="Default 90 días; en DEMO MODE recomendado usar 0-1 para testear"
-    )
-    
-    if st.session_state.demo_mode and st.session_state.snapshot_age_days > 7:
-        st.warning("⚠️ Demo mode con threshold alto (>7d) puede no detectar recursos de prueba")
-    
+    st.subheader("Credenciales Azure (autenticación az login)")
+    st.markdown("Inicia sesión con `az login` en tu terminal antes de usar la app.")
     st.markdown("---")
-    
-    if st.button("🔄 Limpiar caché", width='stretch'):
+    if st.button("🔄 Limpiar caché", use_container_width=True):
         st.session_state.scan_results = None
         st.session_state.ia_results = None
         st.session_state.selected_resources = {}
         st.cache_data.clear()
         st.rerun()
-    st.markdown("---")
-    st.subheader("Credenciales Azure (.env opcional)")
-    st.session_state.use_env = st.checkbox(
-        "Usar credenciales desde .env (service principal)",
-        value=st.session_state.use_env,
-        help="Si está activado intentará leer AZURE_CLIENT_ID, AZURE_CLIENT_SECRET y AZURE_TENANT_ID desde el archivo .env especificado"
-    )
-    st.session_state.env_path = st.text_input("Ruta al archivo .env", value=st.session_state.env_path)
-    if st.button("Cargar .env", key="load_env_btn"):
-        env_file = Path(st.session_state.env_path)
-        if env_file.exists():
-            def _load_env(p: Path):
-                try:
-                    with p.open("r", encoding="utf-8") as fh:
-                        for line in fh:
-                            line = line.strip()
-                            if not line or line.startswith("#"):
-                                continue
-                            if "=" not in line:
-                                continue
-                            k, v = line.split("=", 1)
-                            k = k.strip()
-                            v = v.strip().strip('"').strip("'")
-                            os.environ[k] = v
-                    return True, None
-                except Exception as e:
-                    return False, str(e)
-
-            ok, err = _load_env(env_file)
-            if ok:
-                st.session_state.env_loaded = True
-                st.success(f".env cargado desde: {env_file}")
-            else:
-                st.session_state.env_loaded = False
-                st.error(f"Error cargando .env: {err}")
-        else:
-            st.session_state.env_loaded = False
-            st.error("Archivo .env no encontrado en la ruta especificada")
 
 # ==================== SECCIÓN 1: ESCANEAR AZURE ====================
 
 st.header("1️⃣ Escanear Azure")
-col1, col2 = st.columns([3, 1])
+st.markdown("**Detecta los tipos de recursos zombis soportados:**")
+detector_lines = "\n".join([
+    "- 💾 Discos sin adjuntar",
+    "- 📡 IPs públicas huérfanas",
+    "- 🔗 Network Interfaces sin VM",
+    "- 🖥️ VMs no ejecutándose",
+    "- ⚖️ Load Balancers sin reglas",
+    "- 🏗️ App Service Plans vacíos",
+    "- 🔒 Network Security Groups sin asociar",
+])
+st.markdown(detector_lines)
 
-with col1:
-    st.markdown("**Detecta los tipos de recursos zombis soportados (v1 testeable):**")
-    # Generar la lista a partir de DETECTOR_TYPES para evitar desalineación con los detectores reales
-    detector_lines = "\n".join([f"- {v}" for k, v in DETECTOR_TYPES.items()])
-    st.markdown(detector_lines)
+if st.button("🔍 Ejecutar escaneo", use_container_width=True, type="primary"):
+    st.session_state.scanning = True
 
-with col2:
-    if st.button("🔍 Ejecutar escaneo", width='stretch', type="primary"):
-        st.session_state.scanning = True
-
-    if st.session_state.scanning:
-        try:
-            with st.spinner("Escaneando recursos en Azure... (puede tomar 1-2 minutos)"):
-                # Ejecutar escaneo con threshold configurado
-                st.session_state.scan_results = cached_full_scan(st.session_state.snapshot_age_days)
-                # Normalizar cada recurso para compatibilidad: asegurar campo 'ahorro'
-                def _ensure_ahorro(item):
-                    if not isinstance(item, dict):
-                        return item
-                    if "ahorro" not in item:
-                        # Preferir estimatedMonthlySavings si existe
-                        ems = item.get("estimatedMonthlySavings") or item.get("estimated_monthly_savings")
-                        if ems is None:
-                            item["ahorro"] = "0€"
-                        else:
-                            try:
-                                if isinstance(ems, (int, float)):
-                                    item["ahorro"] = f"{float(ems):.2f}€"
-                                else:
-                                    item["ahorro"] = str(ems)
-                            except Exception:
-                                item["ahorro"] = str(ems)
+if st.session_state.scanning:
+    try:
+        with st.spinner("Escaneando recursos en Azure... (puede tomar 1-2 minutos)"):
+            st.session_state.scan_results = cached_full_scan()
+            def _ensure_ahorro(item):
+                if not isinstance(item, dict):
                     return item
-
-                st.session_state.scan_results = [ _ensure_ahorro(it) for it in st.session_state.scan_results ]
-                st.session_state.scanning = False
-                st.success("✅ Escaneo completado")
-        except Exception as e:
-            st.error(f"❌ Error durante el escaneo: {str(e)}")
+                if "ahorro" not in item:
+                    ems = item.get("estimatedMonthlySavings") or item.get("estimated_monthly_savings")
+                    if ems is None:
+                        item["ahorro"] = "0€"
+                    else:
+                        try:
+                            if isinstance(ems, (int, float)):
+                                item["ahorro"] = f"{float(ems):.2f}€"
+                            else:
+                                item["ahorro"] = str(ems)
+                        except Exception:
+                            item["ahorro"] = str(ems)
+                return item
+            st.session_state.scan_results = [ _ensure_ahorro(it) for it in st.session_state.scan_results ]
             st.session_state.scanning = False
+            st.success("✅ Escaneo completado")
+    except Exception as e:
+        st.error(f"❌ Error durante el escaneo: {str(e)}")
+        st.session_state.scanning = False
 
 # Mostrar resultados del escaneo
 if st.session_state.scan_results:
@@ -463,6 +366,7 @@ if st.session_state.ia_results:
             st.metric("✅ Recursos a mantener", keep_count)
         
         st.subheader("Recomendaciones de Optimización")
+        st.info("⚠️ Al eliminar una máquina virtual, pueden quedar discos, NICs, IPs públicas o NSGs huérfanos. Se recomienda volver a escanear tras el borrado para detectar y eliminar estos recursos.")
         
         # Mostrar cada recomendación en formato expandible
         for idx, (_, row) in enumerate(ia_df.iterrows()):
