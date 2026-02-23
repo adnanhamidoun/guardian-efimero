@@ -35,6 +35,8 @@ Requisitos:
 """
 from typing import Dict, Any, List
 import subprocess
+import os
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -121,6 +123,12 @@ if "resource_group_filter" not in st.session_state:
     st.session_state.resource_group_filter = ""
 if "confirm_execute" not in st.session_state:
     st.session_state.confirm_execute = False
+if "use_env" not in st.session_state:
+    st.session_state.use_env = False
+if "env_path" not in st.session_state:
+    st.session_state.env_path = ".env"
+if "env_loaded" not in st.session_state:
+    st.session_state.env_loaded = False
 
 
 # Caching helpers: cache scan for the session to avoid repeated calls
@@ -262,6 +270,44 @@ with st.sidebar:
         st.session_state.selected_resources = {}
         st.cache_data.clear()
         st.rerun()
+    st.markdown("---")
+    st.subheader("Credenciales Azure (.env opcional)")
+    st.session_state.use_env = st.checkbox(
+        "Usar credenciales desde .env (service principal)",
+        value=st.session_state.use_env,
+        help="Si está activado intentará leer AZURE_CLIENT_ID, AZURE_CLIENT_SECRET y AZURE_TENANT_ID desde el archivo .env especificado"
+    )
+    st.session_state.env_path = st.text_input("Ruta al archivo .env", value=st.session_state.env_path)
+    if st.button("Cargar .env", key="load_env_btn"):
+        env_file = Path(st.session_state.env_path)
+        if env_file.exists():
+            def _load_env(p: Path):
+                try:
+                    with p.open("r", encoding="utf-8") as fh:
+                        for line in fh:
+                            line = line.strip()
+                            if not line or line.startswith("#"):
+                                continue
+                            if "=" not in line:
+                                continue
+                            k, v = line.split("=", 1)
+                            k = k.strip()
+                            v = v.strip().strip('"').strip("'")
+                            os.environ[k] = v
+                    return True, None
+                except Exception as e:
+                    return False, str(e)
+
+            ok, err = _load_env(env_file)
+            if ok:
+                st.session_state.env_loaded = True
+                st.success(f".env cargado desde: {env_file}")
+            else:
+                st.session_state.env_loaded = False
+                st.error(f"Error cargando .env: {err}")
+        else:
+            st.session_state.env_loaded = False
+            st.error("Archivo .env no encontrado en la ruta especificada")
 
 # ==================== SECCIÓN 1: ESCANEAR AZURE ====================
 
@@ -600,54 +646,63 @@ if st.session_state.scan_results and st.session_state.ia_results:
         
         with st.expander("🚀 Ejecución Automática (Experimental)"):
             st.warning("⚠️ **RIESGO ALTO:** Esta función ejecuta comandos directamente en Azure. Verifica todo antes de usar.")
-            if st.checkbox("Confirmo que entiendo los riesgos"):
-                if st.button("🚀 Ejecutar Automáticamente", type="secondary"):
-                    st.session_state.confirm_execute = True
-        
-            st.error("🔴 **CONFIRMACIÓN FINAL:** ¿Ejecutar comandos en Azure? Esta acción no se puede deshacer.")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("✅ EJECUTAR", type="primary"):
-                    try:
-                        st.info("Ejecutando comandos... (puede tomar tiempo)")
-                        # Ejecutar cada comando individualmente para asegurar ejecución en Windows
-                        all_stdout = []
-                        all_stderr = []
-                        success_count = 0
-                        for cmd in command_lines:
-                            try:
-                                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)  # 1 min por comando
-                                if result.stdout:
-                                    all_stdout.append(f"[{cmd}]:\n{result.stdout}")
-                                if result.stderr:
-                                    all_stderr.append(f"[{cmd}]:\n{result.stderr}")
-                                if result.returncode == 0:
-                                    success_count += 1
+
+            # Flujo simplificado: marcar que entiendes los riesgos y pulsar un único botón para ejecutar.
+            confirm_risks = st.checkbox("Confirmo que entiendo los riesgos y deseo ejecutar los comandos automáticamente")
+
+            # Botón único que inicia la ejecución sólo si el usuario ha confirmado
+            if st.button("� EJECUTAR AUTOMÁTICAMENTE", type="primary", key="auto_execute_btn"):
+                if not confirm_risks:
+                    st.error("Debes confirmar que entiendes los riesgos antes de ejecutar los comandos automáticamente.")
+                else:
+                    st.info("Ejecutando comandos... (puede tomar tiempo)")
+
+                    all_stdout = []
+                    all_stderr = []
+                    success_count = 0
+
+                    # Ejecutar cada comando de forma aislada; en caso de fallo (p.ej. AuthorizationFailed)
+                    # registrar el error y continuar con el siguiente comando.
+                    for cmd in command_lines:
+                        try:
+                            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                            stdout = result.stdout.strip()
+                            stderr = result.stderr.strip()
+
+                            if stdout:
+                                all_stdout.append(f"[{cmd}]:\n{stdout}")
+                            if stderr:
+                                # Detectar errores de autorización y clasificarlos como warnings en el log
+                                if "AuthorizationFailed" in stderr or "authorizationfailed" in stderr.lower():
+                                    all_stderr.append(f"[{cmd}]: PERMISO DENEGADO (AuthorizationFailed)\n{stderr}")
                                 else:
-                                    all_stderr.append(f"[{cmd}]: Error código {result.returncode}")
-                            except subprocess.TimeoutExpired:
-                                all_stderr.append(f"[{cmd}]: Timeout")
-                            except Exception as e:
-                                all_stderr.append(f"[{cmd}]: {str(e)}")
-                        
-                        st.success("Salida estándar:")
-                        st.code('\n'.join(all_stdout) or "(Sin salida)")
-                        if all_stderr:
-                            st.error("Errores:")
-                            st.code('\n'.join(all_stderr))
-                        if success_count == len(command_lines):
-                            st.success(f"✅ {success_count}/{len(command_lines)} comandos ejecutados exitosamente")
-                        else:
-                            st.error(f"❌ {success_count}/{len(command_lines)} comandos ejecutados exitosamente")
-                    except subprocess.TimeoutExpired:
-                        st.error("⏰ Timeout: La ejecución tomó demasiado tiempo")
-                    except Exception as e:
-                        st.error(f"❌ Error al ejecutar: {str(e)}")
-                    st.session_state.confirm_execute = False
-            with col2:
-                if st.button("❌ CANCELAR"):
-                    st.session_state.confirm_execute = False
-                    st.info("Ejecución cancelada")
+                                    all_stderr.append(f"[{cmd}]:\n{stderr}")
+
+                            if result.returncode == 0:
+                                success_count += 1
+                            else:
+                                # No lanzar excepción; continuar con el siguiente comando
+                                all_stderr.append(f"[{cmd}]: Error código {result.returncode}")
+
+                        except subprocess.TimeoutExpired:
+                            all_stderr.append(f"[{cmd}]: Timeout")
+                        except Exception as e:
+                            # Capturar cualquier excepción imprevista, registrar y continuar
+                            all_stderr.append(f"[{cmd}]: Excepción: {str(e)}")
+
+                    # Mostrar resultados resumidos
+                    st.subheader("Salida de la ejecución")
+                    st.write("**Salida estándar:**")
+                    st.code('\n'.join(all_stdout) or "(Sin salida)")
+
+                    if all_stderr:
+                        st.write("**Errores / Warnings:**")
+                        st.code('\n'.join(all_stderr))
+
+                    if success_count == len(command_lines):
+                        st.success(f"✅ {success_count}/{len(command_lines)} comandos ejecutados exitosamente")
+                    else:
+                        st.warning(f"⚠️ {success_count}/{len(command_lines)} comandos ejecutados correctamente; revisa los errores para los comandos fallidos")
         
         st.subheader("Resumen Ejecutivo")
         
